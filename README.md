@@ -1,173 +1,90 @@
 # Funaggr - Agregátor místních akcí
 
 ## Přehled
-Android aplikace pro agregaci kulturních a společenských akcí v okolí uživatele. Aplikace zobrazuje události jako divadla, koncerty, trhy, festivaly a další akce seřazené podle vzdálenosti od aktuální polohy.
+Android aplikace pro agregaci kulturních a společenských akcí v okolí uživatele. Zobrazuje divadla, koncerty, trhy, festivaly, výstavy a další akce na příštích 14 dní v okruhu 25 km, seřazené podle vzdálenosti od aktuální polohy.
 
 ## Technický stack
 
-- **Jazyk:** Kotlin
-- **UI Framework:** Jetpack Compose (Material Design 3)
-- **Architektura:** MVVM (Model-View-ViewModel)
-- **Síťová komunikace:** Retrofit + OkHttp
+- **Jazyk:** Kotlin (vestavěná podpora Kotlinu v AGP 9)
+- **UI:** Jetpack Compose, Material Design 3 (dynamické barvy, tmavý režim, pull-to-refresh)
+- **Architektura:** MVVM + repository, Hilt (KSP)
+- **Síť:** OkHttp (HTTP cache, gzip, retry), Jsoup (HTML), kotlinx.serialization (JSON)
 - **Asynchronní operace:** Kotlin Coroutines + Flow
-- **Lokace:** Google Play Services Location API
-- **Dependency Injection:** Hilt
-- **Lokální databáze:** Room (pro offline cache)
-- **Permissions:** Accompanist Permissions
+- **Lokace:** Fused Location Provider + Android Geocoder
+- **Lokální databáze:** Room (offline cache akcí a geokódovaných míst)
+- **Obrázky:** Coil
 
-## Funkce
+## Zdroje dat a fallback
 
-### ✅ Implementované
+| Zdroj | Způsob | Poloha akce |
+|-------|--------|-------------|
+| **Kudy z nudy** (kudyznudy.cz) | HTML kalendáře s hledáním podle GPS (`?datum=od,do&lat=&lon=`), parsování schema.org microdat | obec / městská část → přibližná vzdálenost (≈) |
+| **GoOut** (goout.net) | veřejné JSON API `services/entities/v1/schedules` pro nejbližší město + okolní města (`donuts`) | přesné souřadnice podniku |
 
-1. **Geolokace**
-   - Automatické získání GPS souřadnic
-   - Žádost o oprávnění k lokaci
-   - Fallback na výchozí lokaci (Praha)
+Odolnost proti výpadkům:
 
-2. **Načítání dat**
-   - Mock data source pro testování
-   - Offline cache v Room databázi
-   - Indikátor načítání
-   - Tlačítko Refresh
+1. Zdroje běží **paralelně**, každý s vlastním časovým limitem; chyba jednoho neovlivní ostatní.
+2. Když zdroj selže, použijí se jeho **dříve uložené akce** z cache (pokud jsou ze stejného místa).
+3. Když selžou všechny zdroje, cache se **nepřepisuje** a aplikace zobrazí starší data s upozorněním.
+4. Parser Kudy z nudy má tři strategie: microdata → JSON-LD → odkazy `/akce/`, takže změna webu data zhorší, ale nevymaže.
+5. Data z cache se znovu použijí do 30 minut, pokud se poloha nezměnila o více než 3 km.
 
-3. **Zobrazení událostí**
-   - Seznam karet seřazený podle vzdálenosti
-   - Informace: název, datum, místo, vzdálenost, cena, popis
-   - Barevné štítky podle typu události
-   - Ripple effect při kliknutí
-
-4. **Filtrování**
-   - Horizontální chips pro výběr kategorie
-   - Kategorie: Vše, Hudba, Divadlo, Trhy, Festivaly, Pro děti
-   - Okamžité přepínání filtru
-
-5. **Status bar**
-   - Zobrazení aktuální polohy
-   - Stav načítání (úspěch/chyba/načítání)
-   - Offline režim s upozorněním
-
-6. **Detail události**
-   - Otevření externího prohlížeče se zdrojovou URL
-
-7. **Offline režim**
-   - Cachování dat v Room DB
-   - Zobrazení starších dat při nedostupnosti sítě
+Duplicitní akce z obou zdrojů se slučují (normalizovaný název + datum) a ponechá se záznam s více údaji.
 
 ## Struktura projektu
 
 ```
 app/src/main/java/com/example/funaggr/
 ├── data/
-│   ├── local/           # Room database, DAO, Converters
-│   ├── model/           # Datové modely (Event, EventType, API models)
-│   ├── remote/          # API service, Mock data source
-│   └── repository/      # Repository pattern
-├── di/                  # Hilt dependency injection
-├── ui/
-│   ├── components/      # Compose komponenty (EventCard, FilterBar, StatusBar)
-│   ├── screen/          # Hlavní obrazovky (EventsScreen)
-│   ├── theme/           # Theme, Colors, Typography
-│   └── viewmodel/       # ViewModels
-├── util/                # Utility třídy (LocationManager)
-├── FunaggApplication.kt # Application třída s @HiltAndroidApp
-└── MainActivity.kt      # Hlavní aktivita
+│   ├── geo/          # GeoMath, CzechPlaces (offline gazetteer + GoOut city id), PlaceGeocoder
+│   ├── local/        # Room: EventDatabase, EventDao, PlaceDao, CacheMetadata
+│   ├── model/        # Event, EventType, LocationData
+│   ├── remote/       # EventSource, KudyZNudySource/Parser, GoOutSource/Parser, EventClassifier
+│   └── repository/   # EventRepository (paralelní načítání + fallback), EventMerger (deduplikace)
+├── di/               # Hilt moduly
+├── location/         # LocationProvider
+├── ui/               # Compose obrazovka, komponenty, téma, ViewModel
+├── util/             # Formátování data, vzdálenosti a ceny
+├── FunaggApplication.kt
+└── MainActivity.kt
 ```
 
-## Instalace a spuštění
+## Sestavení a spuštění
 
 ### Požadavky
-- Android Studio Hedgehog nebo novější
-- Android SDK 26+ (minSdk)
-- JDK 17
+- JDK 17+ **včetně `javac`** (např. `openjdk-17-jdk` nebo JBR z Android Studia)
+- Android SDK s platformou **API 37** (compileSdk 37), minSdk 26, targetSdk 36
+- Gradle se stáhne přes wrapper (9.8.0)
 
-### Kroky
-
-1. **Klonování projektu**
-   ```bash
-   git clone <repository-url>
-   cd Funaggr
-   ```
-
-2. **Gradle Sync**
-   - Otevřete projekt v Android Studio
-   - Počkejte na automatickou synchronizaci Gradle
-   - Nebo spusťte ručně: `./gradlew build`
-
-3. **Spuštění**
-   - Připojte Android zařízení nebo spusťte emulátor
-   - Klikněte na "Run" v Android Studio
-   - Nebo použijte: `./gradlew installDebug`
-
-## Konfigurace
-
-### API Endpoint
-Aktuálně používá mock data. Pro produkční použití upravte:
-
-```kotlin
-// app/src/main/java/com/example/funaggr/di/AppModule.kt
-@Provides
-@Singleton
-fun provideRetrofit(...): Retrofit {
-    return Retrofit.Builder()
-        .baseUrl("https://your-api-url.com/") // Změňte URL
-        ...
-}
+### Příkazy
+```bash
+./gradlew assembleDebug        # debug APK
+./gradlew installDebug         # instalace na připojené zařízení
+./gradlew testDebugUnitTest    # unit testy
+./gradlew assembleRelease      # release build (R8 minifikace + zmenšení zdrojů)
 ```
-
-### Připojení na skutečná API
-
-Aplikace je připravena pro integraci s těmito zdroji:
-- **GoOut.net** - koncerty, divadla, kluby
-- **Kudy z nudy (kudyznudy.cz)** - turistické akce, festivaly
-- **Informuji.cz** - komplexní kalendář akcí
-- **Facebook Events API** - lokální akce
-
-Pro integraci:
-1. Implementujte API wrappery v `data/remote/`
-2. Upravte `EventRepository` pro volání skutečných API
-3. Přidejte mapování z API modelů na `Event` model
 
 ## Oprávnění
 
-Aplikace vyžaduje následující oprávnění:
-
 ```xml
 <uses-permission android:name="android.permission.INTERNET" />
-<uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
-<uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
 <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+<uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+<uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
 ```
 
-## Testování
+Bez oprávnění k poloze aplikace použije výchozí polohu (Praha).
 
-### Unit testy
-```bash
-./gradlew test
-```
+## Přidání dalšího zdroje
 
-### UI testy
-```bash
-./gradlew connectedAndroidTest
-```
+1. Implementujte `EventSource` v `data/remote/` (metoda `fetchEvents` při chybě vyhazuje výjimku).
+2. Zaregistrujte jej v `BindingsModule` pomocí `@Binds @IntoSet`.
+3. Repository jej automaticky zapojí do paralelního načítání, fallbacku i deduplikace.
 
 ## Budoucí vylepšení
 
-- [ ] Skutečná integrace s API (GoOut, Kudy z nudy, atd.)
-- [ ] Webový scraping pro weby bez API
-- [ ] Vyhledávání událostí
-- [ ] Oblíbené události
-- [ ] Kalendář/připomenutí
-- [ ] Sdílení událostí
-- [ ] Mapa s událostmi
-- [ ] Detailní view události v aplikaci
-- [ ] Filtrování podle data a ceny
-- [ ] Push notifikace pro nové akce
-
-## Licence
-[MIT License nebo jiná dle preferencí]
-
-## Autor
-Vytvořeno podle technického zadání pro agregaci místních kulturních akcí v České republice.
-
-## Kontakt
-[Vaše kontaktní informace]
+- [ ] Vyhledávání a filtr podle data / ceny
+- [ ] Oblíbené akce a připomenutí
+- [ ] Mapa s akcemi
+- [ ] Přesné souřadnice akcí z Kudy z nudy (detail akce obsahuje `data-lat`/`data-lon`)
+- [ ] Nastavitelný okruh vyhledávání
