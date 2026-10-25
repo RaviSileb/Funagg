@@ -1,5 +1,6 @@
 *.iml
 .gradle
+.kotlin
 /local.properties
 /.idea/caches
 /.idea/libraries
@@ -9,11 +10,8 @@
 /.idea/assetWizardSettings.xml
 .DS_Store
 /build
+/app/build
 /captures
 .externalNativeBuild
 .cxx
 local.properties
-
-# Project exclude paths
-/app/
-/gradle/
